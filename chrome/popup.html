@@ -1,22 +1,127 @@
 <!DOCTYPE html>
 <html>
 <head>
+	<meta charset="utf-8" />
+	<link rel="icon" href="icons/icon-32.png" />
 	<script type="text/javascript" src="popup.js"></script>
 	<style type="text/css">
-		h3 { margin: 0 0 5px 0; font-weight: normal; width: 300px; overflow: hidden; white-space: normal; word-wrap: break-word; max-height: 96px; }
-		h3 code { font-size: 15px; }
-		#content { min-height: 400px; max-height: 800px; padding: 0 10px 10px; }
-		ol { padding: 0 0 0 10px; max-width: 500px; width: 350px; margin: 0; }
-		li i { font-size: 10px; }
-		li pre { white-space: pre-wrap; word-wrap: break-word; background: #f2f2f2; padding: 2px 5px 5px; margin: 0; }
-		li { margin: 0 0 5px; padding: 0; white-space: pre-wrap; word-wrap: break-word; }
-		li span { font-size: 10px; line-height: 12px; margin: 0 0 2px; display: block; }
+		:root { --bg0: #090611; --bg1: #120d1d; --panel: rgba(14, 16, 30, 0.92); --panel2: rgba(11, 13, 24, 0.9); --line: rgba(89, 245, 255, 0.28); --line-strong: rgba(255, 74, 210, 0.45); --text: #ecf7ff; --muted: #8fa6ba; --cyan: #59f5ff; --pink: #ff4ad2; --lime: #c8ff5c; --amber: #ffb54a; }
+		body { margin: 0; font: 13px/1.45 "SFMono-Regular", "Menlo", "Consolas", monospace; background: radial-gradient(circle at top, rgba(255,74,210,0.18), transparent 32%), radial-gradient(circle at 85% 20%, rgba(89,245,255,0.15), transparent 28%), linear-gradient(160deg, var(--bg0), var(--bg1) 68%, #05030a); color: var(--text); }
+		#content { width: 440px; min-height: 520px; max-height: 780px; padding: 14px; box-sizing: border-box; position: relative; }
+		#content:before { content: ""; position: absolute; inset: 0; background-image: linear-gradient(rgba(89,245,255,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(89,245,255,0.05) 1px, transparent 1px); background-size: 20px 20px; pointer-events: none; opacity: 0.22; }
+		.hero { position: relative; z-index: 1; margin: 0 0 12px; padding: 12px 14px; border: 1px solid var(--line-strong); border-radius: 14px; background: linear-gradient(135deg, rgba(255,74,210,0.14), rgba(89,245,255,0.08)); box-shadow: 0 0 30px rgba(89,245,255,0.08); }
+		.hero-brand { display: flex; gap: 12px; align-items: center; }
+		.hero-brand img { width: 40px; height: 40px; flex: 0 0 auto; filter: drop-shadow(0 0 12px rgba(89,245,255,0.18)); }
+		.hero b { display: block; font-size: 16px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--cyan); }
+		.hero span { display: block; color: var(--muted); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+		h3 { margin: 0 0 10px; font-size: 13px; font-weight: 700; white-space: pre-wrap; color: var(--text); }
+		.section { position: relative; z-index: 1; background: linear-gradient(180deg, rgba(16,18,34,0.96), rgba(10,12,22,0.96)); border: 1px solid var(--line); border-radius: 14px; padding: 12px; margin-bottom: 12px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 10px 35px rgba(0,0,0,0.35); }
+		.row { display: flex; gap: 8px; align-items: center; margin-bottom: 9px; }
+		.row label { flex: 1; }
+		.row input[type="text"], .row input[type="number"], .filter-list input, #filters select { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid rgba(89,245,255,0.22); border-radius: 8px; background: rgba(5, 8, 18, 0.9); color: var(--text); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02); }
+		input::placeholder { color: #6f86a0; }
+		input:focus, select:focus { outline: none; border-color: var(--pink); box-shadow: 0 0 0 1px rgba(255,74,210,0.35), 0 0 16px rgba(255,74,210,0.16); }
+		input[type="checkbox"] { accent-color: var(--pink); }
+		.stack { display: grid; gap: 8px; }
+		.stack label { font-weight: 700; color: var(--cyan); text-transform: uppercase; font-size: 11px; letter-spacing: 0.08em; }
+		.filter-list { display: grid; gap: 6px; }
+		.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+		button { border: 1px solid rgba(89,245,255,0.3); background: linear-gradient(135deg, rgba(255,74,210,0.18), rgba(89,245,255,0.18)); color: var(--text); padding: 8px 11px; border-radius: 9px; cursor: pointer; text-transform: uppercase; letter-spacing: 0.08em; font-size: 11px; }
+		button.secondary { background: rgba(8, 10, 18, 0.9); color: var(--cyan); }
+		button:hover { border-color: var(--pink); box-shadow: 0 0 18px rgba(255,74,210,0.18); }
+		#status { min-height: 18px; color: var(--lime); font-size: 12px; }
+		#events { padding: 0 0 0 18px; margin: 0; max-height: 300px; overflow: auto; }
+		#events li { margin-bottom: 10px; color: var(--text); }
+		#events pre { white-space: pre-wrap; word-wrap: break-word; background: rgba(3, 6, 14, 0.92); border: 1px solid rgba(89,245,255,0.16); padding: 8px; border-radius: 8px; margin: 5px 0 0; color: #dffaff; }
+		#events span { font-size: 11px; display: block; white-space: pre-wrap; color: var(--muted); }
+		#filters { display: flex; gap: 8px; margin-bottom: 8px; }
+		#filters select { flex: 1; }
+		code { color: var(--amber); }
+		b { color: var(--cyan); }
+		::-webkit-scrollbar { width: 9px; height: 9px; }
+		::-webkit-scrollbar-thumb { background: linear-gradient(var(--pink), var(--cyan)); border-radius: 999px; }
+		::-webkit-scrollbar-track { background: rgba(255,255,255,0.05); }
 	</style>
 </head>
 <body>
 	<div id="content">
-		<h3 id="h"></h3>
-		<ol id="x"></ol>
+		<div class="hero">
+			<div class="hero-brand">
+				<img src="icons/logo.svg" alt="SignalTrace logo" />
+				<div>
+					<b>SignalTrace</b>
+					<span>postMessage / WebSocket / HTTP telemetry</span>
+				</div>
+			</div>
+		</div>
+		<div class="section">
+			<h3 id="h"></h3>
+			<div id="status"></div>
+			<div class="row">
+				<label><input type="checkbox" id="enable-debugger" /> Enable browser-level WebSocket capture</label>
+			</div>
+			<div class="row">
+				<label><input type="checkbox" id="enable-persistent-archive" /> Persist captured events in browser local storage</label>
+			</div>
+			<div class="row">
+				<label><input type="checkbox" id="enable-postmessage" /> Enable postMessage interception</label>
+			</div>
+			<div class="row">
+				<label><input type="checkbox" id="filter-null-postmessage" /> Filter null postMessage payloads</label>
+			</div>
+			<div class="row">
+				<label><input type="checkbox" id="enable-client-ws" /> Enable client WebSocket interception</label>
+			</div>
+			<div class="row">
+				<label><input type="checkbox" id="enable-server-ws" /> Enable server WebSocket interception</label>
+			</div>
+			<div class="row">
+				<label><input type="checkbox" id="enable-http" /> Enable HTTP request/response capture</label>
+			</div>
+			<div class="row">
+				<label><input type="checkbox" id="enable-http-request-bodies" /> Capture HTTP request bodies</label>
+			</div>
+			<div class="row">
+				<label><input type="checkbox" id="enable-http-response-bodies" /> Capture HTTP response bodies</label>
+			</div>
+			<div class="stack">
+				<label for="postmessage-filter">postMessage regex filter</label>
+				<div id="postmessage-filters" class="filter-list"></div>
+				<label for="client-ws-filter">Client WebSocket regex filter</label>
+				<div id="client-ws-filters" class="filter-list"></div>
+				<label for="server-ws-filter">Server WebSocket regex filter</label>
+				<div id="server-ws-filters" class="filter-list"></div>
+				<label for="http-filter">HTTP regex filter</label>
+				<div id="http-filters" class="filter-list"></div>
+			</div>
+			<div class="row">
+				<label for="max-events">Max events per tab</label>
+				<input type="number" id="max-events" min="100" max="10000" step="100" />
+			</div>
+			<div class="row">
+				<label for="log-url">Log URL</label>
+				<input type="text" id="log-url" />
+			</div>
+			<div class="actions">
+				<button id="save">Save</button>
+				<button id="open-history" class="secondary">Open Full History</button>
+				<button id="clear-tab" class="secondary">Clear Current Tab</button>
+				<button id="clear-archive" class="secondary">Clear Stored Archive</button>
+			</div>
+		</div>
+		<div class="section">
+			<div id="filters">
+				<select id="type-filter">
+					<option value="all">All events</option>
+					<option value="listener">Listeners only</option>
+					<option value="traffic">Traffic only</option>
+					<option value="ws">WebSocket only</option>
+					<option value="postmessage">postMessage only</option>
+					<option value="http">HTTP only</option>
+				</select>
+			</div>
+			<ol id="events"></ol>
+		</div>
 	</div>
 </body>
 </html>

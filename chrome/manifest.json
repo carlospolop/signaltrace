@@ -1,8 +1,14 @@
 {
   "manifest_version": 3,
-  "name": "postMessage-tracker",
-  "description": "Monitors and indicates postMessage-listeners in the current window.",
+  "name": "SignalTrace",
+  "description": "Capture, inspect, filter, archive, and replay postMessage, WebSocket, and HTTP browser traffic.",
   "version": "1.0.1",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
   "background": {
     "service_worker": "background.js"
   },
@@ -15,7 +21,22 @@
         "content_script.js"
       ],
       "run_at": "document_start",
-      "all_frames": true
+      "all_frames": true,
+      "match_about_blank": true,
+      "match_origin_as_fallback": true
+    },
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "injected.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true,
+      "match_origin_as_fallback": true,
+      "world": "MAIN"
     }
   ],
   "options_ui": {
@@ -23,11 +44,17 @@
     "open_in_tab": false
   },
   "action": {
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png"
+    }
   },
   "permissions": [
     "tabs",
-    "storage"
+    "storage",
+    "debugger",
+    "scripting"
   ],
   "host_permissions": [
     "http://*/*",

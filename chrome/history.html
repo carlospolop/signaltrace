@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8" />
+	<title>SignalTrace History</title>
+	<link rel="icon" href="icons/icon-32.png" />
+	<script src="history.js"></script>
+	<style>
+		:root { --bg0: #06030d; --bg1: #120a1c; --cyan: #57f4ff; --pink: #ff46cd; --lime: #c7ff5f; --amber: #ffb74d; --text: #edf7ff; --muted: #90a9c0; --line: rgba(87,244,255,0.22); }
+		body { margin: 0; font: 14px/1.45 "SFMono-Regular", "Menlo", "Consolas", monospace; background: radial-gradient(circle at top left, rgba(255,70,205,0.16), transparent 26%), radial-gradient(circle at 80% 15%, rgba(87,244,255,0.14), transparent 24%), linear-gradient(165deg, var(--bg0), var(--bg1) 65%, #04020a); color: var(--text); }
+		.shell { max-width: 1260px; margin: 0 auto; padding: 22px; position: relative; }
+		.shell:before { content: ""; position: fixed; inset: 0; background-image: linear-gradient(rgba(87,244,255,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(87,244,255,0.04) 1px, transparent 1px); background-size: 24px 24px; pointer-events: none; }
+		.hero { position: relative; z-index: 1; margin-bottom: 16px; padding: 16px 18px; border-radius: 16px; border: 1px solid rgba(255,70,205,0.35); background: linear-gradient(135deg, rgba(255,70,205,0.14), rgba(87,244,255,0.08)); box-shadow: 0 0 40px rgba(87,244,255,0.08); }
+		.hero-brand { display: flex; gap: 14px; align-items: center; }
+		.hero-brand img { width: 52px; height: 52px; flex: 0 0 auto; filter: drop-shadow(0 0 16px rgba(87,244,255,0.18)); }
+		.hero b { display: block; color: var(--cyan); font-size: 26px; letter-spacing: 0.14em; text-transform: uppercase; }
+		.hero span { display: block; color: var(--muted); font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; margin-top: 4px; }
+		.toolbar, .panel { position: relative; z-index: 1; background: linear-gradient(180deg, rgba(15,17,32,0.96), rgba(9,11,20,0.96)); border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin-bottom: 14px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.03), 0 12px 34px rgba(0,0,0,0.34); }
+		.toolbar { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+		select, input { padding: 9px 11px; border: 1px solid rgba(87,244,255,0.22); border-radius: 9px; background: rgba(4, 7, 15, 0.92); color: var(--text); }
+		select:focus, input:focus { outline: none; border-color: var(--pink); box-shadow: 0 0 0 1px rgba(255,70,205,0.35), 0 0 16px rgba(255,70,205,0.14); }
+		input::placeholder { color: #718aa5; }
+		button { border: 1px solid rgba(87,244,255,0.28); background: linear-gradient(135deg, rgba(255,70,205,0.16), rgba(87,244,255,0.16)); color: var(--text); padding: 9px 12px; border-radius: 9px; cursor: pointer; text-transform: uppercase; letter-spacing: 0.08em; font-size: 11px; }
+		button.secondary { background: rgba(5, 8, 18, 0.92); color: var(--cyan); }
+		#summary { white-space: pre-wrap; font-weight: 700; color: var(--lime); }
+		#results { display: grid; gap: 10px; }
+		.card { background: linear-gradient(180deg, rgba(14,17,29,0.98), rgba(9,10,19,0.98)); border: 1px solid rgba(87,244,255,0.18); border-radius: 14px; padding: 14px; box-shadow: 0 10px 26px rgba(0,0,0,0.28); }
+		.card strong { color: var(--text); }
+		.card-head { display: flex; gap: 10px; align-items: flex-start; justify-content: space-between; margin-bottom: 6px; }
+		.card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+		.card code { display: block; white-space: pre-wrap; color: var(--muted); margin: 6px 0; overflow-wrap: anywhere; word-break: break-word; }
+		.card pre { background: rgba(2, 5, 12, 0.94); border: 1px solid rgba(87,244,255,0.14); border-radius: 10px; padding: 10px; white-space: pre-wrap; overflow: auto; overflow-wrap: anywhere; word-break: break-word; max-width: 100%; color: #e4fbff; }
+		.badges { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+		.badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 999px; }
+		.badge.ws { background: rgba(87,244,255,0.14); color: var(--cyan); border: 1px solid rgba(87,244,255,0.2); }
+		.badge.pm { background: rgba(199,255,95,0.14); color: var(--lime); border: 1px solid rgba(199,255,95,0.18); }
+		.badge.http { background: rgba(255,183,77,0.14); color: var(--amber); border: 1px solid rgba(255,183,77,0.18); }
+		.badge.listener { background: rgba(255,70,205,0.14); color: #ff9ae8; border: 1px solid rgba(255,70,205,0.18); }
+		.badge.traffic { background: rgba(136,104,255,0.15); color: #c3b0ff; border: 1px solid rgba(136,104,255,0.18); }
+		.badge.http_event { background: rgba(255,183,77,0.14); color: var(--amber); border: 1px solid rgba(255,183,77,0.18); }
+		button.resend { background: linear-gradient(135deg, rgba(199,255,95,0.16), rgba(87,244,255,0.14)); color: var(--lime); }
+		::-webkit-scrollbar { width: 10px; height: 10px; }
+		::-webkit-scrollbar-thumb { background: linear-gradient(var(--pink), var(--cyan)); border-radius: 999px; }
+		::-webkit-scrollbar-track { background: rgba(255,255,255,0.04); }
+	</style>
+</head>
+<body>
+	<div class="shell">
+		<div class="hero">
+			<div class="hero-brand">
+				<img src="icons/logo.svg" alt="SignalTrace logo" />
+				<div>
+					<b>SignalTrace Archive</b>
+					<span>cross-tab telemetry history and protocol forensics</span>
+				</div>
+			</div>
+		</div>
+		<div class="toolbar">
+			<select id="tab-filter"></select>
+			<select id="type-filter">
+				<option value="all">All events</option>
+				<option value="listener">Listeners only</option>
+				<option value="traffic">Traffic only</option>
+				<option value="ws">WebSocket only</option>
+				<option value="postmessage">postMessage only</option>
+				<option value="http">HTTP only</option>
+			</select>
+			<input type="search" id="search" placeholder="Search payload, API, target..." />
+			<button id="refresh" class="secondary">Refresh</button>
+			<button id="clear-all" class="secondary">Clear All History</button>
+		</div>
+		<div class="panel" id="summary"></div>
+		<div id="results"></div>
+	</div>
+</body>
+</html>

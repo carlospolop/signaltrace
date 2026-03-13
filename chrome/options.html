@@ -1,14 +1,42 @@
 <!DOCTYPE html>
 <html>
-<head></head>
+<head>
+	<meta charset="utf-8" />
+	<title>SignalTrace Options</title>
+	<link rel="icon" href="icons/icon-32.png" />
+	<style>
+		:root { --bg0: #090611; --bg1: #120d1d; --panel: rgba(14, 16, 30, 0.92); --line: rgba(89, 245, 255, 0.28); --line-strong: rgba(255, 74, 210, 0.45); --text: #ecf7ff; --muted: #8fa6ba; --cyan: #59f5ff; --pink: #ff4ad2; --lime: #c8ff5c; }
+		body { margin: 0; padding: 18px; font: 13px/1.45 "SFMono-Regular", "Menlo", "Consolas", monospace; background: radial-gradient(circle at top, rgba(255,74,210,0.18), transparent 32%), radial-gradient(circle at 85% 20%, rgba(89,245,255,0.15), transparent 28%), linear-gradient(160deg, var(--bg0), var(--bg1) 68%, #05030a); color: var(--text); }
+		.hero, #options { max-width: 720px; margin: 0 auto 14px; border-radius: 14px; }
+		.hero { display: flex; gap: 12px; align-items: center; padding: 14px 16px; border: 1px solid var(--line-strong); background: linear-gradient(135deg, rgba(255,74,210,0.14), rgba(89,245,255,0.08)); box-shadow: 0 0 30px rgba(89,245,255,0.08); }
+		.hero img { width: 44px; height: 44px; flex: 0 0 auto; filter: drop-shadow(0 0 12px rgba(89,245,255,0.18)); }
+		.hero b { display: block; font-size: 16px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--cyan); }
+		.hero span { display: block; color: var(--muted); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; margin-top: 2px; }
+		#options { padding: 16px; border: 1px solid var(--line); background: linear-gradient(180deg, rgba(16,18,34,0.96), rgba(10,12,22,0.96)); box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 10px 35px rgba(0,0,0,0.35); }
+		a { color: var(--cyan); }
+		input { width: 100%; max-width: 420px; box-sizing: border-box; margin: 8px 0 10px; padding: 8px 10px; border: 1px solid rgba(89,245,255,0.22); border-radius: 8px; background: rgba(5, 8, 18, 0.9); color: var(--text); }
+		input:focus { outline: none; border-color: var(--pink); box-shadow: 0 0 0 1px rgba(255,74,210,0.35), 0 0 16px rgba(255,74,210,0.16); }
+		button { border: 1px solid rgba(89,245,255,0.3); background: linear-gradient(135deg, rgba(255,74,210,0.18), rgba(89,245,255,0.18)); color: var(--text); padding: 8px 11px; border-radius: 9px; cursor: pointer; text-transform: uppercase; letter-spacing: 0.08em; font-size: 11px; }
+		#status { min-height: 18px; margin-top: 10px; color: var(--lime); font-size: 12px; }
+	</style>
+</head>
 <body>
-	<div id='response'></div>
-	<div id="options">
-		Log-URL:
-		<input type="text" id="log-url" size="40" />
-		<button id="save">Save</button>
-		<div id="status"></div>
-	</div>
-	<script src="options.js"></script>
-</body>
-</html>
+		<div class="hero">
+			<img src="icons/logo.svg" alt="SignalTrace logo" />
+			<div>
+				<b>SignalTrace</b>
+				<span>lightweight options and archive access</span>
+			</div>
+		</div>
+		<div id='response'></div>
+		<div id="options">
+			<p>Primary controls are available from the extension popup.</p>
+			<p><a href="history.html" target="_blank">Open the full history page</a></p>
+			Log-URL:
+			<input type="text" id="log-url" size="40" />
+			<button id="save">Save</button>
+			<div id="status"></div>
+		</div>
+		<script src="options.js"></script>
+	</body>
+	</html>
