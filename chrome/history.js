@@ -117,6 +117,39 @@ function getVisibleEvents() {
 	return events;
 }
 
+function buildExportPayload() {
+	var events = getVisibleEvents();
+	return {
+		exported_at: new Date().toISOString(),
+		filters: {
+			tab: document.getElementById('tab-filter').value,
+			type: document.getElementById('type-filter').value,
+			search: document.getElementById('search').value.trim()
+		},
+		total_tabs: Object.keys(latestState.listeners).length,
+		total_events: events.length,
+		events: events.map(function(item) {
+			return {
+				tabId: parseInt(item.tabId, 10),
+				entry: item.entry
+			};
+		})
+	};
+}
+
+function downloadFilteredEvents() {
+	var payload = buildExportPayload();
+	var blob = new Blob([JSON.stringify(payload, null, 2)], {type: 'application/json'});
+	var url = URL.createObjectURL(blob);
+	var anchor = document.createElement('a');
+	anchor.href = url;
+	anchor.download = 'signaltrace-history-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json';
+	document.body.appendChild(anchor);
+	anchor.click();
+	document.body.removeChild(anchor);
+	URL.revokeObjectURL(url);
+}
+
 function render() {
 	populateTabs();
 	updateCaptureToggleButton();
@@ -185,6 +218,7 @@ function init() {
 	document.getElementById('refresh').addEventListener('click', function() {
 		port.postMessage({type: 'get-state'});
 	});
+	document.getElementById('download-json').addEventListener('click', downloadFilteredEvents);
 	document.getElementById('stop-capturing').addEventListener('click', function() {
 		port.postMessage({type: isCapturingEnabled() ? 'stop-capturing' : 'start-capturing'});
 	});
