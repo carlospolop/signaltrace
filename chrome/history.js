@@ -3,6 +3,15 @@ var port = chrome.runtime.connect({
 });
 var latestState = {listeners: {}, settings: {}, selectedId: null};
 
+function isCapturingEnabled() {
+	var current = latestState.settings || {};
+	return current.enable_debugger !== false || current.enable_postmessage !== false || current.enable_client_ws !== false || current.enable_server_ws !== false || current.enable_http !== false;
+}
+
+function updateCaptureToggleButton() {
+	document.getElementById('stop-capturing').textContent = isCapturingEnabled() ? 'Stop Capturing' : 'Start Capturing';
+}
+
 function option(label, value) {
 	var el = document.createElement('option');
 	el.value = value;
@@ -110,6 +119,7 @@ function getVisibleEvents() {
 
 function render() {
 	populateTabs();
+	updateCaptureToggleButton();
 	var events = getVisibleEvents();
 	var summary = document.getElementById('summary');
 	summary.textContent = events.length + ' events shown across ' + Object.keys(latestState.listeners).length + ' tabs';
@@ -174,6 +184,12 @@ function init() {
 	document.getElementById('search').addEventListener('input', render);
 	document.getElementById('refresh').addEventListener('click', function() {
 		port.postMessage({type: 'get-state'});
+	});
+	document.getElementById('stop-capturing').addEventListener('click', function() {
+		port.postMessage({type: isCapturingEnabled() ? 'stop-capturing' : 'start-capturing'});
+	});
+	document.getElementById('clear-all-data').addEventListener('click', function() {
+		port.postMessage({type: 'clear-all-captured-data'});
 	});
 	document.getElementById('clear-all').addEventListener('click', function() {
 		port.postMessage({type: 'clear-history'});

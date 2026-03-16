@@ -144,6 +144,7 @@ function renderSettings() {
 	renderFilterInputs();
 	document.getElementById('max-events').value = latestState.settings.max_events_per_tab || 1000;
 	document.getElementById('log-url').value = latestState.settings.log_url || '';
+	updateCaptureToggleButton();
 }
 
 function renderState(msg) {
@@ -158,6 +159,16 @@ function showStatus(text) {
 	setTimeout(function() {
 		if(status.textContent == text) status.textContent = '';
 	}, 1500);
+}
+
+function isCapturingEnabled() {
+	var current = latestState.settings || {};
+	return current.enable_debugger !== false || current.enable_postmessage !== false || current.enable_client_ws !== false || current.enable_server_ws !== false || current.enable_http !== false;
+}
+
+function updateCaptureToggleButton() {
+	var button = document.getElementById('stop-capturing');
+	button.textContent = isCapturingEnabled() ? 'Stop Capturing' : 'Start Capturing';
 }
 
 function saveSettings() {
@@ -194,6 +205,20 @@ function init() {
 	port.postMessage({type: 'get-state'});
 
 	document.getElementById('save').addEventListener('click', saveSettings);
+	document.getElementById('stop-capturing').addEventListener('click', function() {
+		settingsDirty = false;
+		if(isCapturingEnabled()) {
+			port.postMessage({type: 'stop-capturing'});
+			showStatus('Capturing stopped.');
+			return;
+		}
+		port.postMessage({type: 'start-capturing'});
+		showStatus('Capturing started.');
+	});
+	document.getElementById('clear-all-data').addEventListener('click', function() {
+		port.postMessage({type: 'clear-all-captured-data'});
+		showStatus('Captured data cleared.');
+	});
 	document.getElementById('open-history').addEventListener('click', function() {
 		port.postMessage({type: 'open-history-page'});
 	});
@@ -217,6 +242,7 @@ function init() {
 	document.getElementById('max-events').addEventListener('input', markSettingsDirty);
 	document.getElementById('log-url').addEventListener('input', markSettingsDirty);
 	renderFilterInputs();
+	updateCaptureToggleButton();
 }
 
 window.onload = init;

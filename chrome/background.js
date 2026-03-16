@@ -182,6 +182,19 @@ function clearPersistentArchive(callback) {
 	});
 }
 
+function clearAllCapturedData(callback) {
+	tab_listeners = {};
+	chrome.tabs.query({}, function(tabs) {
+		for(var i = 0; i < tabs.length; i++) {
+			refreshCount(tabs[i].id);
+		}
+		clearPersistentArchive(function() {
+			broadcastState();
+			if(callback) callback();
+		});
+	});
+}
+
 function loadPersistentArchive(callback) {
 	chrome.storage.local.get(ARCHIVE_STORAGE_KEY, function(items) {
 		var stored = items[ARCHIVE_STORAGE_KEY];
@@ -840,6 +853,30 @@ function updateSettings(nextSettings, callback) {
 	});
 }
 
+function stopCapturing(callback) {
+	updateSettings({
+		enable_debugger: false,
+		enable_postmessage: false,
+		enable_client_ws: false,
+		enable_server_ws: false,
+		enable_http: false,
+		enable_http_request_bodies: false,
+		enable_http_response_bodies: false
+	}, callback);
+}
+
+function startCapturing(callback) {
+	updateSettings({
+		enable_debugger: true,
+		enable_postmessage: true,
+		enable_client_ws: true,
+		enable_server_ws: true,
+		enable_http: true,
+		enable_http_request_bodies: true,
+		enable_http_response_bodies: true
+	}, callback);
+}
+
 function getStatePayload() {
 	return {listeners: tab_listeners, settings: settings, selectedId: selectedId};
 }
@@ -966,6 +1003,24 @@ chrome.runtime.onConnect.addListener(function(port) {
 		}
 		if(msg && msg.type == 'update-settings') {
 			updateSettings(msg.settings || {}, function() {
+				port.postMessage(getStatePayload());
+			});
+			return;
+		}
+		if(msg && msg.type == 'stop-capturing') {
+			stopCapturing(function() {
+				port.postMessage(getStatePayload());
+			});
+			return;
+		}
+		if(msg && msg.type == 'start-capturing') {
+			startCapturing(function() {
+				port.postMessage(getStatePayload());
+			});
+			return;
+		}
+		if(msg && msg.type == 'clear-all-captured-data') {
+			clearAllCapturedData(function() {
 				port.postMessage(getStatePayload());
 			});
 			return;
