@@ -5,11 +5,18 @@ var DEBUGGER_PROTOCOL_VERSION = '1.3';
 var debuggerSockets = {};
 var debuggerHttp = {};
 var attachedDebuggerTabs = {};
+var attachingDebuggerTabs = {};
 var connectedPorts = [];
 var MAX_CAPTURED_BODY_CHARS = 200000;
 var ARCHIVE_STORAGE_KEY = 'persistent_archive';
 var RESEND_DRAFT_KEY = 'resend_drafts';
 var archivePersistTimer = null;
+var agentMode = false;
+var agentSessions = {};
+var agentSequence = 0;
+var agentCounters = {};
+var agentPort = null;
+var agentBroadcastTimer = null;
 var settings = {
 	log_url: '',
 	enable_debugger: true,
@@ -38,6 +45,81 @@ function getMaxEventsPerTab() {
 	if(parsed < 100) return 100;
 	if(parsed > 10000) return 10000;
 	return parsed;
+}
+
+function agentSession(tabId) { return agentSessions[tabId] || null; }
+
+function agentChannel(msg) {
+	var api = String(msg.api || '').toLowerCase();
+	if(msg.eventType == 'http' || api.indexOf('http') !== -1) return 'http';
+	if(api.indexOf('websocket') !== -1) return msg.direction == 'send' ? 'client_ws' : 'server_ws';
+	if(api.indexOf('message') !== -1) return 'postmessage';
+	return 'other';
+}
+
+function agentAllowed(tabId, msg) {
+	if(!agentMode) return true;
+	var session = agentSession(tabId);
+	if(!session) return false;
+	var channel = agentChannel(msg);
+	if((channel == 'client_ws' || channel == 'server_ws') && session.useDebugger &&
+		String(msg.api || '').indexOf('CDP.WebSocket') !== 0) return false;
+	try {
+		if(msg.parent_url && /^https?:/.test(msg.parent_url) && new URL(msg.parent_url).origin != session.origin) return false;
+	} catch(e) { return false; }
+	if(channel == 'client_ws' || channel == 'server_ws') {
+		var socketUrl = msg.meta && msg.meta.url;
+		try {
+			if(socketUrl && /^wss?:/.test(socketUrl) &&
+				new URL(socketUrl.replace(/^ws/, 'http')).origin != session.origin) return false;
+		} catch(e) { return false; }
+	}
+	if(channel == 'other' || !session.channels[channel]) return false;
+	if(channel == 'postmessage' && session.filterNull && (msg.payload === null || msg.payload === 'null')) return false;
+	var value = String(msg.payload || '').slice(0, session.maxPayloadChars);
+	var filters = session.filters[channel] || [];
+	for(var i = 0; i < filters.length; i++) {
+		if(value.toLowerCase().indexOf(filters[i]) !== -1 ||
+			String(msg.api || '').toLowerCase().indexOf(filters[i]) !== -1 ||
+			String(msg.target || '').toLowerCase().indexOf(filters[i]) !== -1) return false;
+	}
+	return true;
+}
+
+function agentPageConfig(tabId) {
+	var session = agentSession(tabId);
+	return session ? {
+		enable_postmessage: !!session.channels.postmessage,
+		enable_client_ws: !!session.channels.client_ws && !session.useDebugger,
+		enable_server_ws: !!session.channels.server_ws && !session.useDebugger,
+		filter_null_postmessage: session.filterNull,
+		postmessage_filter: session.filters.postmessage,
+		client_ws_filter: session.filters.client_ws,
+		server_ws_filter: session.filters.server_ws,
+		agent_quiet: true,
+		agent_max_payload_chars: session.maxPayloadChars
+	} : {enable_postmessage: false, enable_client_ws: false, enable_server_ws: false, agent_quiet: true};
+}
+
+function normalizeAgentSession(input, previous) {
+	input = input || {};
+	previous = previous || {};
+	var channels = Object.assign({postmessage: true, client_ws: true, server_ws: true, http: false}, previous.channels || {}, input.channels || {});
+	for(var channel in channels) channels[channel] = !!channels[channel];
+	channels.http = false;
+	var filters = {};
+	for(var key of ['postmessage', 'client_ws', 'server_ws']) {
+		var raw = (input.filters && input.filters[key]) || (previous.filters && previous.filters[key]) || [];
+		if(!Array.isArray(raw) || raw.length > 30 || raw.some(function(x) { return typeof x != 'string' || x.length > 120; })) throw new Error('Invalid filter list');
+		filters[key] = raw.map(function(x) { return x.toLowerCase(); }).filter(Boolean);
+	}
+	var maxEvents = Number(input.maxEvents === undefined ? (previous.maxEvents || 300) : input.maxEvents);
+	var maxPayloadChars = Number(input.maxPayloadChars === undefined ? (previous.maxPayloadChars || 2048) : input.maxPayloadChars);
+	if(!Number.isInteger(maxEvents) || maxEvents < 20 || maxEvents > 1000) throw new Error('maxEvents must be 20..1000');
+	if(!Number.isInteger(maxPayloadChars) || maxPayloadChars < 128 || maxPayloadChars > 8192) throw new Error('maxPayloadChars must be 128..8192');
+	return {channels: channels, filters: filters, maxEvents: maxEvents, maxPayloadChars: maxPayloadChars,
+		filterNull: input.filterNull === undefined ? previous.filterNull !== false : !!input.filterNull,
+		useDebugger: input.useDebugger === undefined ? previous.useDebugger !== false : !!input.useDebugger};
 }
 
 function normalizeFilterList(value) {
@@ -91,6 +173,7 @@ function stringifyPayload(payload) {
 }
 
 function shouldCaptureChannel(channel, payload, api, target) {
+	if(agentMode) return true; // Agent filters run once in recordEvent, per tab.
 	var haystack = [stringifyPayload(payload), api || '', target || ''].join('\n');
 	if(channel == 'postmessage') {
 		if(settings.filter_null_postmessage && (payload === null || typeof payload == 'undefined' || stringifyPayload(payload) == 'null')) {
@@ -152,6 +235,15 @@ function refreshCount(tabId) {
 }
 
 function broadcastState() {
+	if(agentMode && !connectedPorts.length) return;
+	if(agentMode && !agentBroadcastTimer) {
+		agentBroadcastTimer = setTimeout(function() { agentBroadcastTimer = null; broadcastStateNow(); }, 1000);
+		return;
+	}
+	broadcastStateNow();
+}
+
+function broadcastStateNow() {
 	var payload = {listeners: tab_listeners, settings: settings, selectedId: selectedId};
 	for(var i = connectedPorts.length - 1; i >= 0; i--) {
 		try {
@@ -171,6 +263,7 @@ function persistArchiveNow() {
 }
 
 function scheduleArchivePersist() {
+	if(agentMode) return;
 	if(!settings.enable_persistent_archive) return;
 	if(archivePersistTimer) clearTimeout(archivePersistTimer);
 	archivePersistTimer = setTimeout(persistArchiveNow, 750);
@@ -385,9 +478,11 @@ function storeEvent(tabId, msg) {
 		msg.fingerprint = fingerprint;
 	}
 	tab_listeners[tabId][tab_listeners[tabId].length] = msg;
-	var maxEvents = getMaxEventsPerTab();
+	var maxEvents = agentMode && agentSession(tabId) ? agentSession(tabId).maxEvents : getMaxEventsPerTab();
 	if(tab_listeners[tabId].length > maxEvents) {
-		tab_listeners[tabId].splice(0, tab_listeners[tabId].length - maxEvents);
+		var excess = tab_listeners[tabId].length - maxEvents;
+		tab_listeners[tabId].splice(0, excess);
+		if(agentMode && agentCounters[tabId]) agentCounters[tabId].evicted = (agentCounters[tabId].evicted || 0) + excess;
 	}
 	return true;
 }
@@ -408,17 +503,40 @@ function logListener(data) {
 }
 
 function recordEvent(tabId, msg) {
+	if(!agentAllowed(tabId, msg)) {
+		if(agentMode && agentSession(tabId)) {
+			if(!agentCounters[tabId]) agentCounters[tabId] = {seen: 0, filtered: 0, dropped: 0, evicted: 0};
+			agentCounters[tabId].seen++;
+			agentCounters[tabId].filtered++;
+		}
+		return;
+	}
+	if(agentMode) {
+		var session = agentSession(tabId);
+		if(!agentCounters[tabId]) agentCounters[tabId] = {seen: 0, filtered: 0, dropped: 0, evicted: 0};
+		agentCounters[tabId].seen++;
+		msg.payload = String(msg.payload || '').slice(0, session.maxPayloadChars);
+		delete msg.fullstack;
+		delete msg.stack;
+		delete msg.listener;
+		if(msg.meta) msg.meta = {url: msg.meta.url ? String(msg.meta.url).split('?')[0] : undefined,
+			targetOrigin: msg.meta.targetOrigin, opcode: msg.meta.opcode};
+		msg.id = ++agentSequence;
+	}
 	if(!msg.captured_at) msg.captured_at = Date.now();
 	var stored = storeEvent(tabId, msg);
 	if(stored) {
-		logListener(msg);
-		refreshCount(tabId);
+		if(!agentMode) logListener(msg);
+		if(!agentMode) refreshCount(tabId);
 		scheduleArchivePersist();
 		broadcastState();
+	} else if(agentMode) {
+		agentCounters[tabId].dropped++;
 	}
 }
 
 function sendConsoleEvent(tabId, event) {
+	if(agentMode) return;
 	try {
 		chrome.tabs.sendMessage(tabId, {
 			type: 'postMessageTrackerConsoleEvent',
@@ -601,7 +719,7 @@ function maybeFetchResponseBody(tabId, requestId, done) {
 }
 
 function handleHttpNetworkEvent(source, method, params) {
-	if(!source.tabId || !settings.enable_http) return;
+	if(!source.tabId || agentMode || !settings.enable_http) return;
 	var tabId = source.tabId;
 	var state = ensureHttpState(tabId);
 	var record;
@@ -669,6 +787,7 @@ function handleHttpNetworkEvent(source, method, params) {
 
 function handleDebuggerNetworkEvent(source, method, params) {
 	if(!source.tabId) return;
+	if(agentMode && (!agentSession(source.tabId) || !agentSession(source.tabId).useDebugger)) return;
 	var tabId = source.tabId;
 	var state = ensureDebuggerState(tabId);
 	var event;
@@ -749,22 +868,43 @@ function handleDebuggerNetworkEvent(source, method, params) {
 	}
 }
 
-function attachDebuggerToTab(tab) {
-	if(!settings.enable_debugger || (!settings.enable_client_ws && !settings.enable_server_ws && !settings.enable_http)) return;
-	if(!isTrackableTab(tab)) return;
-	if(attachedDebuggerTabs[tab.id]) return;
+function attachDebuggerToTab(tab, ready) {
+	ready = ready || function() {};
+	if(agentMode) {
+		var session = tab && agentSession(tab.id);
+		if(!session || !session.useDebugger || (!session.channels.client_ws && !session.channels.server_ws)) { ready(null); return; }
+	} else if(!settings.enable_debugger || (!settings.enable_client_ws && !settings.enable_server_ws && !settings.enable_http)) { ready(null); return; }
+	if(!isTrackableTab(tab) && !(agentMode && tab && tab.url == 'about:blank')) { ready(new Error('Tab cannot be debugged')); return; }
+	if(agentMode && tab.url != 'about:blank' && new URL(tab.url).origin != agentSession(tab.id).origin) { ready(new Error('Tab outside session origin')); return; }
+	if(attachedDebuggerTabs[tab.id]) { ready(null); return; }
+	if(attachingDebuggerTabs[tab.id]) { attachingDebuggerTabs[tab.id].push(ready); return; }
+	attachingDebuggerTabs[tab.id] = [ready];
+	function finish(error) {
+		var callbacks = attachingDebuggerTabs[tab.id] || [];
+		delete attachingDebuggerTabs[tab.id];
+		callbacks.forEach(function(callback) { callback(error || null); });
+	}
 	chrome.debugger.attach(debuggerTarget(tab.id), DEBUGGER_PROTOCOL_VERSION, function() {
 		if(chrome.runtime.lastError) {
 			console.log('debugger attach failed', tab.id, chrome.runtime.lastError.message);
+			finish(new Error(chrome.runtime.lastError.message));
 			return;
 		}
 		attachedDebuggerTabs[tab.id] = true;
+		if(agentMode && (!agentSession(tab.id) || !agentSession(tab.id).useDebugger)) {
+			detachDebuggerFromTab(tab.id);
+			finish(new Error('Agent session is no longer active'));
+			return;
+		}
 		ensureDebuggerState(tab.id);
 		ensureHttpState(tab.id);
 		chrome.debugger.sendCommand(debuggerTarget(tab.id), 'Network.enable', {maxPostDataSize: MAX_CAPTURED_BODY_CHARS}, function() {
 			if(chrome.runtime.lastError) {
 				console.log('debugger network enable failed', tab.id, chrome.runtime.lastError.message);
+				finish(new Error(chrome.runtime.lastError.message));
+				return;
 			}
+			finish(null);
 		});
 		broadcastState();
 	});
@@ -786,6 +926,11 @@ function detachDebuggerFromTab(tabId) {
 }
 
 function syncDebuggers() {
+	if(agentMode) {
+		for(var currentId in attachedDebuggerTabs) if(!agentSession(Number(currentId))) detachDebuggerFromTab(Number(currentId));
+		chrome.tabs.query({}, function(tabs) { tabs.forEach(attachDebuggerToTab); });
+		return;
+	}
 	if(!settings.enable_debugger || (!settings.enable_client_ws && !settings.enable_server_ws && !settings.enable_http)) {
 		for(var tabId in attachedDebuggerTabs) {
 			detachDebuggerFromTab(parseInt(tabId, 10));
@@ -913,12 +1058,110 @@ function buildResendDraft(payload) {
 	};
 }
 
+function agentResult(tabId, afterId, limit) {
+	var events = tab_listeners[tabId] || [];
+	var selected = events.filter(function(event) { return event.id > afterId; }).slice(0, limit);
+	return {events: selected, nextId: selected.length ? selected[selected.length - 1].id : afterId,
+		oldestId: events.length ? events[0].id : null, retained: events.length,
+		counters: agentCounters[tabId] || {seen: 0, filtered: 0, dropped: 0, evicted: 0}};
+}
+
+function handleAgentControl(msg, reply) {
+	var op = msg.op;
+	if(op == 'arm') {
+		agentMode = true;
+		agentSessions = {};
+		agentCounters = {};
+		tab_listeners = {};
+		if(archivePersistTimer) clearTimeout(archivePersistTimer);
+		archivePersistTimer = null;
+		clearPersistentArchive();
+		syncDebuggers();
+		chrome.storage.session.set({agentMode: true, agentSessions: {}}, function() { reply({ok: true}); });
+		return;
+	}
+	if(!agentMode) { reply({ok: false, error: 'Call arm first'}); return; }
+	var tabId = Number(msg.tabId);
+	if(!Number.isInteger(tabId) || tabId < 1) { reply({ok: false, error: 'Valid tabId required'}); return; }
+	chrome.tabs.get(tabId, function(tab) {
+		if(chrome.runtime.lastError || !tab) { reply({ok: false, error: 'Tab not found'}); return; }
+		try {
+			if(op == 'start' || op == 'configure') {
+				if(op == 'configure' && !agentSession(tabId)) throw new Error('No active session');
+				var session = normalizeAgentSession(msg.settings, agentSession(tabId));
+				if(op == 'start') {
+					var origin = new URL(msg.origin).origin;
+					if(!/^https?:/.test(origin)) throw new Error('HTTP(S) origin required');
+					if(tab.url && /^https?:/.test(tab.url) && new URL(tab.url).origin != origin) throw new Error('Tab origin differs');
+					session.origin = origin;
+					tab_listeners[tabId] = [];
+					agentCounters[tabId] = {seen: 0, filtered: 0, dropped: 0, evicted: 0};
+				} else session.origin = agentSession(tabId).origin;
+				agentSessions[tabId] = session;
+				chrome.storage.session.set({agentMode: true, agentSessions: agentSessions}, function() {
+					chrome.tabs.sendMessage(tabId, {type: 'agent-config', settings: agentPageConfig(tabId)}, function() {
+						void chrome.runtime.lastError;
+						if(!session.useDebugger) {
+							detachDebuggerFromTab(tabId);
+							reply({ok: true, tabId: tabId, settings: session});
+						} else attachDebuggerToTab(tab, function(error) {
+							if(error) {
+								session.useDebugger = false;
+								detachDebuggerFromTab(tabId);
+								chrome.storage.session.set({agentMode: true, agentSessions: agentSessions});
+								chrome.tabs.sendMessage(tabId, {type: 'agent-config', settings: agentPageConfig(tabId)}, function() { void chrome.runtime.lastError; });
+							}
+							reply({ok: true, tabId: tabId, settings: session,
+								debuggerError: error ? error.message : null});
+						});
+					});
+				});
+			} else if(op == 'events') {
+				if(!agentSession(tabId)) throw new Error('No active session');
+				var afterId = Math.max(0, Number(msg.afterId) || 0);
+				var limit = Math.min(100, Math.max(1, Number(msg.limit) || 50));
+				reply(Object.assign({ok: true}, agentResult(tabId, afterId, limit)));
+			} else if(op == 'stats') {
+				reply({ok: true, tabId: tabId, retained: (tab_listeners[tabId] || []).length,
+					counters: agentCounters[tabId] || {seen: 0, filtered: 0, dropped: 0, evicted: 0},
+					settings: agentSession(tabId)});
+			} else if(op == 'clear') {
+				tab_listeners[tabId] = [];
+				agentCounters[tabId] = {seen: 0, filtered: 0, dropped: 0, evicted: 0};
+				reply({ok: true});
+			} else if(op == 'stop') {
+				delete agentSessions[tabId];
+				delete agentCounters[tabId];
+				delete tab_listeners[tabId];
+				detachDebuggerFromTab(tabId);
+				chrome.storage.session.set({agentMode: true, agentSessions: agentSessions});
+				chrome.tabs.sendMessage(tabId, {type: 'agent-config', settings: agentPageConfig(tabId)}, function() { void chrome.runtime.lastError; });
+				reply({ok: true});
+			} else reply({ok: false, error: 'Unknown operation'});
+		} catch(error) { reply({ok: false, error: error.message}); }
+	});
+}
+
 chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
-	console.log('message from cs', msg);
+	if(msg && msg.type == 'agent-get-config') {
+		sendResponse({agentMode: agentMode, settings: agentMode ? agentPageConfig(sender.tab ? sender.tab.id : -1) : null});
+		return;
+	}
+	if(msg && msg.type == 'agent-control') {
+		if(!sender || sender.id != chrome.runtime.id || sender.url != chrome.runtime.getURL('control.html')) {
+			sendResponse({ok: false, error: 'Control page required'});
+			return;
+		}
+		handleAgentControl(msg, sendResponse);
+		return true;
+	}
 	var tabId = sender.tab ? sender.tab.id : null;
 	if(msg.listener || msg.eventType) {
 		if(msg.listener == 'function () { [native code] }') return;
 		if(tabId === null) return;
+		if(agentMode && !agentSession(tabId)) return;
+		if(agentMode && sender.tab && agentSession(tabId) && /^https?:/.test(sender.tab.url || '') &&
+			new URL(sender.tab.url).origin != agentSession(tabId).origin) return;
 		msg.parent_url = sender.tab.url;
 		recordEvent(tabId, msg);
 	}
@@ -928,15 +1171,17 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
 	if(msg.changePage && tabId !== null) {
 		delete tab_lasturl[tabId];
 	}
-	if(msg.log) {
+	if(msg.log && !agentMode) {
 		console.log(msg.log);
 	}
 });
 
 chrome.tabs.onUpdated.addListener(function(tabId, props, tab) {
-	console.log(props);
+	if(agentMode && agentSession(tabId) && tab && isTrackableTab(tab) && new URL(tab.url).origin != agentSession(tabId).origin) detachDebuggerFromTab(tabId);
+	if(agentMode && agentSession(tabId) && tab && isTrackableTab(tab)) attachDebuggerToTab(tab);
 	if(props.status == "complete") {
 		attachDebuggerToTab(tab);
+		if(agentMode && agentSession(tabId)) chrome.tabs.sendMessage(tabId, {type: 'agent-config', settings: agentPageConfig(tabId)}, function() { void chrome.runtime.lastError; });
 		refreshCount(tabId);
 	} else if(props.status) {
 		if(tab_push[tabId]) {
@@ -959,6 +1204,8 @@ chrome.tabs.onActivated.addListener(function(activeInfo) {
 
 chrome.tabs.onRemoved.addListener(function(tabId) {
 	detachDebuggerFromTab(tabId);
+	delete agentSessions[tabId];
+	delete agentCounters[tabId];
 	delete tab_listeners[tabId];
 	delete tab_push[tabId];
 	delete tab_lasturl[tabId];
@@ -1072,13 +1319,18 @@ chrome.runtime.onConnect.addListener(function(port) {
 	port.postMessage(getStatePayload());
 });
 
-loadSettings(function() {
-	loadPersistentArchive(function() {
+chrome.storage.session.get({agentMode: false, agentSessions: {}}, function(agentState) {
+	agentMode = !!agentState.agentMode;
+	agentSessions = agentState.agentSessions || {};
+	loadSettings(function() {
+	 loadPersistentArchive(function() {
+		if(agentMode) tab_listeners = {};
 		chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
 			if(tabs.length) selectedId = tabs[0].id;
 			refreshCount();
 			broadcastState();
 		});
 		syncDebuggers();
-	});
+	 });
+ });
 });

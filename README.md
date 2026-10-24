@@ -27,6 +27,38 @@ It gives you:
 
 ## Core Capabilities
 
+### Agent-controlled, bounded sessions
+
+Browser automation can open `chrome-extension://<extension-id>/control.html` and call its
+`window.SignalTrace` API from that extension page. Target websites cannot call this API.
+Use a fresh persistent Chromium profile and call `arm()` before visiting the target.
+`arm()` switches the profile to agent mode, clears prior captured data, and disables
+HTTP capture, persistent archiving, external logging, and global debugger attachment.
+
+```js
+await control.evaluate(() => SignalTrace.arm());
+await control.evaluate(({tabId, origin}) => SignalTrace.start(tabId, origin, {
+  maxEvents: 300, maxPayloadChars: 2048,
+  filters: {postmessage: ['known-heartbeat'], server_ws: ['ticker-ping']}
+}), {tabId, origin});
+// Navigate the reserved about:blank tab to the authorized origin.
+const batch = await control.evaluate(tabId => SignalTrace.events(tabId, 0, 50), tabId);
+await control.evaluate(tabId => SignalTrace.configure(tabId, {
+  filters: {postmessage: ['known-heartbeat', 'known-noise']}
+}), tabId);
+await control.evaluate(tabId => SignalTrace.stop(tabId), tabId);
+```
+
+`start(tabId, origin, settings)` binds one tab to one HTTP(S) origin. `configure` changes
+filters and caps live; `events(tabId, afterId, limit)` returns up to 100 retained events
+and a cursor; `stats(tabId)` returns retained, seen, filtered and deduplicated counts;
+`clear(tabId)` resets its ring; `stop(tabId)` detaches capture. Filters are literal,
+case-insensitive substrings, capped at 30 per channel and 120 characters each. Agent
+mode uses CDP for WebSocket frames and disables page-hook socket capture to prevent
+duplicates. Its default ring holds 300 events with at most 2048 payload characters
+each. HTTP is unavailable in agent mode. Manual popup and History behavior remain
+available in a separate browser profile.
+
 ### `postMessage`
 
 - Hooks listener registration and `onmessage`

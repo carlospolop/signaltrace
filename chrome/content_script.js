@@ -16,21 +16,28 @@ document.addEventListener('postMessageTracker', function(event) {
 
 function dispatchTrackerSettings() {
 	withRuntime(function() {
-		chrome.storage.sync.get({
-			enable_postmessage: true,
-			enable_client_ws: true,
-			enable_server_ws: true,
-			enable_http: true,
-			enable_http_request_bodies: true,
-			enable_http_response_bodies: true,
-			filter_null_postmessage: true,
-			postmessage_filter: [],
-			client_ws_filter: [],
-			server_ws_filter: [],
-			http_filter: []
-		}, function(items) {
-			if(chrome.runtime.lastError) return;
-			document.dispatchEvent(new CustomEvent('postMessageTrackerConfig', {detail: items}));
+		chrome.runtime.sendMessage({type: 'agent-get-config'}, function(agent) {
+			if(!chrome.runtime.lastError && agent && agent.agentMode) {
+				document.dispatchEvent(new CustomEvent('postMessageTrackerConfig', {detail: agent.settings}));
+				return;
+			}
+			chrome.storage.sync.get({
+				enable_postmessage: true,
+				enable_client_ws: true,
+				enable_server_ws: true,
+				enable_http: true,
+				enable_http_request_bodies: true,
+				enable_http_response_bodies: true,
+				filter_null_postmessage: true,
+				postmessage_filter: [],
+				client_ws_filter: [],
+				server_ws_filter: [],
+				http_filter: []
+			}, function(items) {
+				if(chrome.runtime.lastError) return;
+				items.agent_quiet = false;
+				document.dispatchEvent(new CustomEvent('postMessageTrackerConfig', {detail: items}));
+			});
 		});
 	});
 }
@@ -57,6 +64,10 @@ function logConsoleEvent(event) {
 }
 
 chrome.runtime.onMessage.addListener(function(message) {
+	if(message && message.type == 'agent-config') {
+		document.dispatchEvent(new CustomEvent('postMessageTrackerConfig', {detail: message.settings}));
+		return;
+	}
 	if(message && message.type == 'postMessageTrackerConsoleEvent' && message.event) {
 		logConsoleEvent(message.event);
 	}

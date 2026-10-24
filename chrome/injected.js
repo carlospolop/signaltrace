@@ -35,6 +35,8 @@ also, we look for jQuery-expandos to identify events being added later on by jQu
 		enable_postmessage: true,
 		enable_client_ws: true,
 		enable_server_ws: true,
+		agent_quiet: true,
+		agent_max_payload_chars: 2048,
 		filter_null_postmessage: true,
 		postmessage_filter: [],
 		client_ws_filter: [],
@@ -95,12 +97,13 @@ also, we look for jQuery-expandos to identify events being added later on by jQu
 	var safeToString = function(value) {
 		try {
 			if(typeof value == 'string') {
-				return value;
+				return trackerConfig.agent_quiet ? value.slice(0, trackerConfig.agent_max_payload_chars || 2048) : value;
 			}
 			if(typeof value == 'undefined') {
 				return 'undefined';
 			}
-			return JSON.stringify(value);
+			var serialized = JSON.stringify(value);
+			return trackerConfig.agent_quiet ? serialized.slice(0, trackerConfig.agent_max_payload_chars || 2048) : serialized;
 		} catch (e) {
 			try {
 				return String(value);
@@ -203,6 +206,16 @@ also, we look for jQuery-expandos to identify events being added later on by jQu
 
 	var shouldCapture = function(api, direction, payload, target) {
 		var channel = classifyChannel(api, direction);
+		if(channel == 'postmessage' && !trackerConfig.enable_postmessage) return false;
+		if(channel == 'client_ws' && !trackerConfig.enable_client_ws) return false;
+		if(channel == 'server_ws' && !trackerConfig.enable_server_ws) return false;
+		if(trackerConfig.agent_quiet && channel != 'other') {
+			var list = trackerConfig[channel + '_filter'] || [];
+			if(channel == 'postmessage' && trackerConfig.filter_null_postmessage && payload == null) return false;
+			if(!list.length) return true;
+			var shortHaystack = [safeToString(payload), api || '', target || ''].join('\n').toLowerCase();
+			return !list.some(function(term) { return shortHaystack.indexOf(String(term).toLowerCase()) !== -1; });
+		}
 		var haystack = [safeToString(payload), api || '', target || ''].join('\n');
 		if(channel == 'postmessage') {
 			if(trackerConfig.filter_null_postmessage && (payload === null || typeof payload == 'undefined' || safeToString(payload) == 'null')) {
@@ -220,6 +233,7 @@ also, we look for jQuery-expandos to identify events being added later on by jQu
 	};
 
 	var logCapturedTraffic = function(detail) {
+		if(trackerConfig.agent_quiet) return;
 		var kind = classifyChannel(detail.api, detail.direction);
 		if(kind == 'other') {
 			return;
@@ -261,6 +275,7 @@ also, we look for jQuery-expandos to identify events being added later on by jQu
 	};
 
 	var trackTraffic = function(direction, api, target, payload, extraOffset, meta) {
+		if(!shouldCapture(api, direction, payload, target)) return;
 		var fullstack = getStack(2);
 		emitTraffic({
 			direction: direction,
@@ -515,6 +530,7 @@ also, we look for jQuery-expandos to identify events being added later on by jQu
 		if(!shouldCapture('MessagePort.message', 'receive', e.data, 'MessagePort')) {
 			return;
 		}
+		if(trackerConfig.agent_quiet) { trackTraffic('receive', 'MessagePort.message', 'MessagePort', e.data, 1); return; }
 		var p = (e.ports && e.ports.length ? '%cport' + e.ports.length + '%c ' : '');
 		var msg = '%cport%c→%c' + h(e.source) + '%c ' + p + (typeof e.data == 'string' ? e.data : 'j ' + safeToString(e.data));
 		if(p.length) {
@@ -529,6 +545,7 @@ also, we look for jQuery-expandos to identify events being added later on by jQu
 		if(!shouldCapture('window.message', 'receive', e.data, 'window')) {
 			return;
 		}
+		if(trackerConfig.agent_quiet) { trackTraffic('receive', 'window.message', 'window', e.data, 1); return; }
 		var p = (e.ports && e.ports.length ? '%cport' + e.ports.length + '%c ' : '');
 		var msg = '%c' + h(e.source) + '%c→%c' + h() + '%c ' + p + (typeof e.data == 'string' ? e.data : 'j ' + safeToString(e.data));
 		if(p.length) {
